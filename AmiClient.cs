@@ -36,8 +36,9 @@ namespace Ami
 
         private readonly ConcurrentDictionary<String, TaskCompletionSource<AmiMessage>> inFlight;
 
-        public AmiClient()
+        public AmiClient(CancellationToken cancellationToken)
         {
+            this.cancellationToken = cancellationToken;
             this.observers = new ConcurrentDictionary<IObserver<AmiMessage>, Subscription>(
                 Environment.ProcessorCount,
                 65536);
@@ -48,10 +49,11 @@ namespace Ami
                 StringComparer.OrdinalIgnoreCase);
         }
 
+        private CancellationToken cancellationToken;
         private Stream stream;
 
         [Obsolete("use Start() method")]
-        public AmiClient(Stream stream) : this()
+        public AmiClient(Stream stream, CancellationToken cancellationToken) : this(cancellationToken)
         {
             this.Stream = stream;
         }
@@ -148,7 +150,7 @@ namespace Ami
             this.Stop();
         }
 
-        public async Task<AmiMessage> Publish(AmiMessage action)
+        public async Task<AmiMessage> Publish(AmiMessage action, int timeOut = 2000)
         {
             if(this.stream == null)
             {
@@ -164,16 +166,24 @@ namespace Ami
 
             try
             {
-                var buffer = action.ToBytes();
-
-                lock(this.stream)
+                using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                    this.stream.Write(buffer, 0, buffer.Length);
+                    cts.CancelAfter(timeOut);
+                    using (cts.Token.Register(() => tcs.SetCanceled(), useSynchronizationContext: false))
+                    {
+                        var buffer = action.ToBytes();
+
+                        if (new Random().Next(10)>=9) await Task.Delay(2500);
+                        lock (this.stream)
+                        {
+                            this.stream.Write(buffer, 0, buffer.Length);
+                        }
+
+                        this.DataSent?.Invoke(this, new DataEventArgs(buffer));
+
+                        return await tcs.Task;
+                    }
                 }
-
-                this.DataSent?.Invoke(this, new DataEventArgs(buffer));
-
-                return await tcs.Task;
             }
             catch(Exception ex)
             {
