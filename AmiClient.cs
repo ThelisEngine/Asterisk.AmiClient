@@ -173,7 +173,6 @@ namespace Ami
                     {
                         var buffer = action.ToBytes();
 
-                        if (new Random().Next(10)>=9) await Task.Delay(2500);
                         lock (this.stream)
                         {
                             this.stream.Write(buffer, 0, buffer.Length);
